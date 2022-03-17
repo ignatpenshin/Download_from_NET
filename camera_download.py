@@ -4,9 +4,8 @@ import sys
 import math
 import time
 import os
-from functools import partial
-from tqdm import tqdm
-from multiprocessing import Process, Pool
+# from multiprocessing import Process
+from subprocess import Popen, CREATE_NEW_CONSOLE, PIPE
 
 
 def folder_creator():
@@ -56,10 +55,10 @@ def camera_process(basic_dir, Hostname, Username, Password, cnopts, \
                     remoteFilePath, remoteFilePath_phone, cameras, phone_list, cam_path):
     with pysftp.Connection(host=Hostname, username=Username, password=Password, cnopts=cnopts) as sftp:
         dir_to_create = ''
-        cam_path_way = remoteFilePath + cam_path.filename + "/DCIM"
+        cam_path_way = remoteFilePath + cam_path + "/DCIM"
         sftp.cwd(cam_path_way)
         directory_structure = [x for x in sftp.listdir_attr() if x.filename.startswith('Camera')]
-        print('\n', f'------ Download from {cam_path.filename} ------ ', '\n')
+        print('\n', f'------ Download from {cam_path} ------ ', '\n')
         for Camera_n in directory_structure:
             sftp.cwd(cam_path_way + "/" + Camera_n.filename)
             for file in [x for x in sorted(sftp.listdir_attr(),  
@@ -70,15 +69,15 @@ def camera_process(basic_dir, Hostname, Username, Password, cnopts, \
                 if not os.path.exists(total_date):
                     os.mkdir(total_date)
                 os.chdir(total_date)
-                if str(cameras[cam_path.filename][0] + file_date[:-7]) != dir_to_create: 
+                if str(cameras[cam_path][0] + file_date[:-7]) != dir_to_create: 
                     #new track dir
-                    dir_to_create = str(cameras[cam_path.filename][0] + file_date[:-7])
-                    path_log = file_to_folder(cameras[cam_path.filename][0] + file_date)
-                    print('\n', f' <<<<< Track {cameras[cam_path.filename][0] + file_date} created >>>>> ', '\n')
+                    dir_to_create = str(cameras[cam_path][0] + file_date[:-7])
+                    path_log = file_to_folder(cameras[cam_path][0] + file_date)
+                    print('\n', f' <<<<< Track {cameras[cam_path][0] + file_date} created >>>>> ', '\n')
                     #load mobile
-                    if cameras[cam_path.filename][1] in phone_list:
+                    if cameras[cam_path][1] in phone_list:
                         # print('\n'*10, 'YESSSSS', cameras[cam_path.filename][1], phone_list, '\n'*10)
-                        phone_path = remoteFilePath_phone + cameras[cam_path.filename][1]
+                        phone_path = remoteFilePath_phone + cameras[cam_path][1]
                         # find OutDoorActive gpx
                         gpx_path = phone_path + "/Android/data/com.outdooractive.Outdooractive/files/GPX"
                         sftp.cwd(gpx_path)
@@ -110,7 +109,7 @@ def camera_process(basic_dir, Hostname, Username, Password, cnopts, \
                 os.chdir(basic_dir)
 
 
-if __name__ == "__main__":
+def main(argv):
 
     #Ubuntu PC
     Hostname = "192.168.10.114"
@@ -131,8 +130,6 @@ if __name__ == "__main__":
     cnopts = pysftp.CnOpts()
     cnopts.hostkeys = None
 
-    
-
     # Camera scan for new photos 
     with pysftp.Connection(host=Hostname, username=Username, password=Password, cnopts=cnopts) as sftp:
 
@@ -145,24 +142,29 @@ if __name__ == "__main__":
         sftp.cwd(remoteFilePath_phone)
         phone_list = [x.filename for x in sftp.listdir_attr() if x.filename in phone_dict.values()]
 
-        procs = []
 
-        if not os.path.exists("TRACKS"):
-            os.mkdir("TRACKS")
-        os.chdir("TRACKS")
-        basic_dir = os.getcwd()
+        if argv == None:
+            for cam_path in cam_list:
+                os.system('mode con: cols=10')
+                os.system("start cmd /k " + 'camera_download.py ' + cam_path.filename)
+        
+        else:
+            if not os.path.exists("TRACKS"):
+                os.mkdir("TRACKS")
+            os.chdir("TRACKS")
+            basic_dir = os.getcwd()
+
+            print(argv)
+            camera_process(basic_dir, Hostname, Username, Password, cnopts, \
+                    remoteFilePath, remoteFilePath_phone, cameras, phone_list, argv)
 
 
-        for cam_path in cam_list:
-            procs.append(Process(target = camera_process, \
-                args = (basic_dir, Hostname, Username, Password, cnopts, \
-                    remoteFilePath, remoteFilePath_phone, cameras, phone_list, cam_path)))
+if __name__ == "__main__":
+    
+    if len(sys.argv) == 1:
+        main(None)
+    else:
+        main(sys.argv[1])
 
-
-        for p in procs:
-            p.start()
-            time.sleep(5)
-        for p in procs:
-            p.join()
-
+    
         
