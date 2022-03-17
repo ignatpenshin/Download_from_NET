@@ -1,16 +1,12 @@
-from collections import namedtuple
 from datetime import datetime, timezone
 import pysftp
 import sys
 import math
 import time
 import os
-
-
-if not os.path.exists("TRACKS"):
-    os.mkdir("TRACKS")
-os.chdir("TRACKS")
-basic_dir = os.getcwd()
+from functools import partial
+from tqdm import tqdm
+from multiprocessing import Process, Pool
 
 
 def folder_creator():
@@ -55,72 +51,34 @@ def progressbar(x, y):
     sys.stdout.write(f'[{bar}] {percents}% {filesize}\r')
     sys.stdout.flush()
 
-#Ubuntu PC
-Hostname = "192.168.10.114"
-Username = "pesh"
-Password = "Pass1528"
 
-#Ubuntu -> phone
-phone_dict = {"vel1": "sftp:host=10.64.12.136,port=2222,user=vel1",
-              "vel2": "sftp:host=10.64.12.175,port=2222,user=vel2",
-              "vel3": "sftp:host=10.64.12.182,port=2222,user=vel3"}
-
-#Ubuntu -> cameras
-cameras = { 'Cam1-64Gb':['i31_', phone_dict["vel1"]], 
-            'Cam2-64Gb':['i32_', phone_dict["vel2"]], 
-            'Cam3-64Gb':['i33_', phone_dict["vel3"]]}
-
-
-cnopts = pysftp.CnOpts()
-cnopts.hostkeys = None
-
-# Camera scan for new photos 
-with pysftp.Connection(host=Hostname, username=Username, password=Password, cnopts=cnopts) as sftp:
-
-    print("Connection successfully established ... ")
-    remoteFilePath = "/media/pesh/" #sftp usb-connected camera folders
-    sftp.cwd(remoteFilePath)
-    cam_list = [x for x in sftp.listdir_attr() if x.filename in cameras.keys()]
-
-    remoteFilePath_phone = "/run/user/1000/gvfs/" #sftp virtual phone folders
-    sftp.cwd(remoteFilePath_phone)
-    phone_list = [x.filename for x in sftp.listdir_attr() if x.filename in phone_dict.values()]
-
-
-    for cam_path in cam_list:
-
+def camera_process(basic_dir, Hostname, Username, Password, cnopts, \
+                    remoteFilePath, remoteFilePath_phone, cameras, phone_list, cam_path):
+    with pysftp.Connection(host=Hostname, username=Username, password=Password, cnopts=cnopts) as sftp:
         dir_to_create = ''
-
         cam_path_way = remoteFilePath + cam_path.filename + "/DCIM"
         sftp.cwd(cam_path_way)
         directory_structure = [x for x in sftp.listdir_attr() if x.filename.startswith('Camera')]
-
         print('\n', f'------ Download from {cam_path.filename} ------ ', '\n')
-
         for Camera_n in directory_structure:
             sftp.cwd(cam_path_way + "/" + Camera_n.filename)
             for file in [x for x in sorted(sftp.listdir_attr(),  
                                 key = lambda f: f.st_mtime) if x.filename.startswith('IMG') 
                                                 and (x.filename.endswith('.insp') or x.filename.endswith('.jpg'))]:
-
                 file_date = datetime.fromtimestamp(file.st_mtime, tz=timezone.utc).strftime('%Y%m%d_%H%M%S')
                 total_date = datetime.fromtimestamp(file.st_mtime, tz=timezone.utc).strftime('%Y_%m_%d')
-
                 if not os.path.exists(total_date):
                     os.mkdir(total_date)
                 os.chdir(total_date)
-
                 if str(cameras[cam_path.filename][0] + file_date[:-7]) != dir_to_create: 
                     #new track dir
                     dir_to_create = str(cameras[cam_path.filename][0] + file_date[:-7])
                     path_log = file_to_folder(cameras[cam_path.filename][0] + file_date)
                     print('\n', f' <<<<< Track {cameras[cam_path.filename][0] + file_date} created >>>>> ', '\n')
-
                     #load mobile
-                    # print(cameras[cam_path.filename][1], phone_list)
                     if cameras[cam_path.filename][1] in phone_list:
+                        # print('\n'*10, 'YESSSSS', cameras[cam_path.filename][1], phone_list, '\n'*10)
                         phone_path = remoteFilePath_phone + cameras[cam_path.filename][1]
-
                         # find OutDoorActive gpx
                         gpx_path = phone_path + "/Android/data/com.outdooractive.Outdooractive/files/GPX"
                         sftp.cwd(gpx_path)
@@ -132,7 +90,7 @@ with pysftp.Connection(host=Hostname, username=Username, password=Password, cnop
                                     sftp.get(gpx.filename, path_log + \
                                         "\\_GPS_\\GPXs\\" + gpx.filename, callback = lambda x,y: progressbar(x,y)) 
                                     print(gpx.filename)
-                        
+
                         #find emlid data
                         emlid_filepath = phone_path + "/Download/"
                         sftp.cwd(emlid_filepath)
@@ -140,19 +98,71 @@ with pysftp.Connection(host=Hostname, username=Username, password=Password, cnop
                             if (emlid.filename.endswith(".zip") or emlid.filename.endswith(".ZIP")) and \
                                 emlid.filename.__contains__("RINEX") and \
                                 datetime.fromtimestamp(emlid.st_mtime, tz=timezone.utc).strftime('%Y_%m_%d') == total_date:
-
                                 if not os.path.exists(path_log+"\\_GPS_\\ROVER\\"+emlid.filename):
                                     print('\n', ' --> EMLID_RINEX-file loading: ')
                                     sftp.get(emlid.filename, path_log + \
                                         "\\_GPS_\\ROVER\\" + emlid.filename, callback = lambda x,y: progressbar(x,y))      
                                     print(emlid.filename, '\n')  
-
                     sftp.cwd(cam_path_way + "/" + Camera_n.filename)                        
-
                 if not os.path.exists(path_log+"\\original\\"+file.filename):
                     sftp.get(file.filename, path_log+"\\original\\"+file.filename, callback = lambda x,y: progressbar(x,y))
                     print(Camera_n.filename, file.filename, file_date)
-
                 os.chdir(basic_dir)
-    sftp.close()
+
+
+if __name__ == "__main__":
+
+    #Ubuntu PC
+    Hostname = "192.168.10.114"
+    Username = "pesh"
+    Password = "Pass1528"
+
+    #Ubuntu -> phone
+    phone_dict = {"vel1": "sftp:host=10.64.12.136,port=2222,user=vel1",
+                  "vel2": "sftp:host=10.64.12.175,port=2222,user=vel2",
+                  "vel3": "sftp:host=10.64.12.182,port=2222,user=vel3"}
+
+    #Ubuntu -> cameras
+    cameras = { 'Cam1-64Gb':['i31_', phone_dict["vel1"]], 
+                'Cam2-64Gb':['i32_', phone_dict["vel2"]], 
+                'Cam3-64Gb':['i33_', phone_dict["vel3"]]}
+
+
+    cnopts = pysftp.CnOpts()
+    cnopts.hostkeys = None
+
+    
+
+    # Camera scan for new photos 
+    with pysftp.Connection(host=Hostname, username=Username, password=Password, cnopts=cnopts) as sftp:
+
+        print("Connection successfully established ... ")
+        remoteFilePath = "/media/pesh/" #sftp usb-connected camera folders
+        sftp.cwd(remoteFilePath)
+        cam_list = [x for x in sftp.listdir_attr() if x.filename in cameras.keys()]
+
+        remoteFilePath_phone = "/run/user/1000/gvfs/" #sftp virtual phone folders
+        sftp.cwd(remoteFilePath_phone)
+        phone_list = [x.filename for x in sftp.listdir_attr() if x.filename in phone_dict.values()]
+
+        procs = []
+
+        if not os.path.exists("TRACKS"):
+            os.mkdir("TRACKS")
+        os.chdir("TRACKS")
+        basic_dir = os.getcwd()
+
+
+        for cam_path in cam_list:
+            procs.append(Process(target = camera_process, \
+                args = (basic_dir, Hostname, Username, Password, cnopts, \
+                    remoteFilePath, remoteFilePath_phone, cameras, phone_list, cam_path)))
+
+
+        for p in procs:
+            p.start()
+            time.sleep(5)
+        for p in procs:
+            p.join()
+
         
