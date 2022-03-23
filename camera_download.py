@@ -1,8 +1,10 @@
+from asyncio.subprocess import DEVNULL
 from datetime import datetime, timezone
 import pysftp
 import sys
 import math
 import os
+from tqdm import tqdm
 from subprocess import Popen
 
 
@@ -52,8 +54,6 @@ def progressbar(x, y):
 def camera_process(stitch_path, stitch_runner, basic_dir, Hostname, Username, Password, cnopts, \
                     remoteFilePath, remoteFilePath_phone, cameras, phone_list, cam_path):
     created_tracks = []
-    # original_photos = []
-    # stitched_photos = []
 
     with pysftp.Connection(host=Hostname, username=Username, password=Password, cnopts=cnopts) as sftp:
         dir_to_create = ''
@@ -109,25 +109,25 @@ def camera_process(stitch_path, stitch_runner, basic_dir, Hostname, Username, Pa
                                     print(emlid.filename, '\n')  
                     sftp.cwd(cam_path_way + "/" + Camera_n.filename)
 
-                # original_photos.append(path_log+"\\original\\"+file.filename)
-                # stitched_photos.append(path_log+"\\instaOne\\"+file.filename.replace(".insp", ".jpg"))
-
                 if not os.path.exists(path_log+"\\original\\"+file.filename):
                     sftp.get(file.filename, path_log+"\\original\\"+file.filename, callback = lambda x,y: progressbar(x,y))
                     print(Camera_n.filename, file.filename, file_date)
                 os.chdir(basic_dir)
-    
-    # cmd = " -inputs {} -output {} -stitch_type optflow -enable_flowstate open flowstate \
-                    # -output_size 6080x3040 -disable_cuda enable_cuda".format(" ".join(original_photos), " ".join(stitched_photos))
-    # Popen(stitch_path+stitch_runner+cmd, shell=True).wait() 
 
+    #stitching
     for path in created_tracks:
+        print("Stitching track {} / {}".format(created_tracks.index(path), len(created_tracks)))
         os.chdir(path+"\original")
-        for photo in os.listdir():
-            if not os.path.exists(path+"\\instaOne\\"+photo.replace(".insp", ".jpeg")):
+        for photo in tqdm(os.listdir()):
+            if photo.endswith(".jpg") and not os.path.exists(path+"\\instaOne\\"+photo):
                 cmd = " -inputs {} -output {} -stitch_type optflow -enable_flowstate open flowstate \
-                    -output_size 6080x3040 -disable_cuda enable_cuda".format(path+"\\original\\"+photo, path+"\\instaOne\\"+photo.replace(".insp", ".jpg"))
-                Popen(stitch_path+stitch_runner+cmd, shell=True).wait() 
+                    -output_size 6080x3040 -disable_cuda 0".format(path+"\\original\\"+photo, path+"\\instaOne\\"+photo)
+                Popen(stitch_path+stitch_runner+cmd, shell=False, stdout=DEVNULL).wait() 
+            if photo.endswith(".insp") and not os.path.exists(path+"\\instaOne\\"+photo.replace(".insp", ".jpg")):
+                cmd = " -inputs {} -output {} -stitch_type optflow -enable_flowstate open flowstate \
+                    -output_size 6080x3040 -disable_cuda 0".format(path+"\\original\\"+photo, path+"\\instaOne\\"+photo.replace(".insp", ".jpg"))
+                Popen(stitch_path+stitch_runner+cmd, shell=False, stdout=DEVNULL).wait() 
+            
 
 
 def main(argv):
@@ -143,9 +143,9 @@ def main(argv):
                   "vel3": "sftp:host=10.64.12.182,port=2222,user=vel3"}
 
     #Ubuntu -> cameras
-    cameras = { 'Cam1-64Gb':['i31_', phone_dict["vel1"]], 
+    cameras = { 'Cam3-64Gb':['i31_', phone_dict["vel1"]], 
                 'Cam2-64Gb':['i32_', phone_dict["vel2"]], 
-                'Cam3-64Gb':['i33_', phone_dict["vel3"]]}
+                'Cam1-64Gb':['i33_', phone_dict["vel3"]]}
 
 
     cnopts = pysftp.CnOpts()
