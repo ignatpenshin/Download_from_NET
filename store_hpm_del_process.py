@@ -123,38 +123,60 @@ def camera_process(exiftool_path, exiftool_runner, stitch_path, stitch_runner, b
                 os.chdir(basic_dir)
     
     return created_tracks
+    
 
 
-def copy_to_hpm(original_path, created_tracks):
+def copy_to_hpm(original_path, processed_path, created_tracks):
     print('\n', '------ STORE -> HPM COPY PROCESS ------ ', '\n')
-    hpm_path = [original_path + '\\' + '\\'.join(track) for track in splitter(created_tracks)]
-    pairs = [list(tup) for tup in zip(created_tracks, hpm_path)]
+    hpm_path_orig = [original_path + '\\' + '\\'.join(track) for track in splitter(created_tracks)]
+    hpm_path_proc = [processed_path + '\\' + '\\'.join(track) for track in splitter(created_tracks)]
+    pairs = [list(tup) for tup in zip(created_tracks, hpm_path_orig)]
     for pair in pairs:
         print(f"{pairs.index(pair)} from {len(pairs)} tracks copied")
+        #create dir in original
         if not os.path.exists(pair[1]):
             os.makedirs(pair[1])
             os.chdir(pair[1])
-            folder_creator()
+            folder_creator()       
         os.chdir(pair[0])
-        for root, dirs, files in os.walk(".", topdown = False):   # ".", topdown = False
+        for root, dirs, files in os.walk(".", topdown = False):   
             for name in tqdm(files):
                 hpm_file = os.path.join(pair[1], root[2:], name)
                 store_file = os.path.join(os.path.abspath(root), name)
                 if not os.path.exists(hpm_file):
                     shutil.copyfile(store_file, hpm_file)
-    return hpm_path
 
-def stitching(created_tracks, stitch_path, stitch_runner, exiftool_path, exiftool_runner):
+    #create dir in processed
+    for dir in hpm_path_proc:
+        if not os.path.exists(dir):
+            os.makedirs(dir)
+            os.chdir(dir)
+            folder_creator()
+
+        # copy _GPS_ data: path_original -> path_processed    
+        orig_dir = hpm_path_orig[hpm_path_proc.index(dir)] + "\\_GPS_"
+        os.chdir(orig_dir)
+        for root, dirs, files in os.walk(".", topdown = False):   
+            for name in files:
+                orig_gps_file = os.path.join(orig_dir, root[2:], name)
+                process_gps_file = os.path.join(dir + "\\_GPS_", root[2:], name)
+                if not os.path.exists(process_gps_file):
+                    shutil.copyfile(orig_gps_file, process_gps_file)
+
+    return hpm_path_orig, hpm_path_proc
+
+
+def stitching(original_tracks, process_tracks, stitch_path, stitch_runner, exiftool_path, exiftool_runner):
     #stitching
-    for path in created_tracks:
-        print("Stitching track {} / {}".format(created_tracks.index(path) + 1, len(created_tracks)))
+    for path in original_tracks:
+        print("Stitching track {} / {}".format(original_tracks.index(path) + 1, len(original_tracks)))
         os.chdir(path+"\original")
         for photo in tqdm(os.listdir()):
             
             if photo.endswith(".jpg"):
-                photo_link = path+"\\instaOne\\"+photo
+                photo_link = process_tracks[original_tracks.index(path)]+"\\instaOne\\"+photo
             if photo.endswith(".insp"):
-                photo_link = path+"\\instaOne\\"+photo.replace(".insp", ".jpg")
+                photo_link = process_tracks[original_tracks.index(path)]+"\\instaOne\\"+photo.replace(".insp", ".jpg")
             if not os.path.exists(photo_link):
                 cmd_stitch = " -inputs {} -output {} -stitch_type optflow -enable_flowstate open flowstate \
                     -output_size 6080x3040 -disable_cuda 0".format(path+"\\original\\"+photo, photo_link)
@@ -165,8 +187,7 @@ def stitching(created_tracks, stitch_path, stitch_runner, exiftool_path, exiftoo
                 if photo.endswith(".insp"):
                     cmd_exif = " -ExtractEmbedded" + cmd_exif
                 Popen(exiftool_path + exiftool_runner + f + cmd_exif, shell=False, stderr=DEVNULL, stdout=DEVNULL).wait() 
-
-       
+    
 
 def main(argv):
 
@@ -231,15 +252,16 @@ def main(argv):
             basic_dir = os.getcwd()
 
             print(argv)
+            #From cameras/phones to STORE
             created_tracks = camera_process(exiftool_path, exiftool_runner, stitch_path, stitch_runner, basic_dir, Hostname, Username, Password, cnopts, \
                     remoteFilePath, remoteFilePath_phone, cameras, phone_list, argv)
 
-            #copy to hpm8
-            hpm_tracks = copy_to_hpm(original_path, created_tracks)
+            #From STORE copy to hpm8 (original)
+            original_tracks, process_tracks = copy_to_hpm(original_path, processed_path, created_tracks)
             
 
-            # stitch  -> to func   
-            stitching(hpm_tracks, stitch_path, stitch_runner, exiftool_path, exiftool_runner)
+            # stitch from hpm_original -> hpm_processed 
+            stitching(original_tracks, process_tracks, stitch_path, stitch_runner, exiftool_path, exiftool_runner)
 
             # processing ????
 
